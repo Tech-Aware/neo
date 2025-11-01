@@ -4,6 +4,7 @@ import { ENV } from '../config/env';
 import { getUserActivityModel } from '../models/userHistory';
 import fetchData from '../utils/fetchData';
 import spinner from '../utils/spinner';
+import logger from '../utils/logger';
 import getMyBalance from '../utils/getMyBalance';
 import postOrder from '../utils/postOrder';
 
@@ -12,6 +13,7 @@ const RETRY_LIMIT = ENV.RETRY_LIMIT;
 const PROXY_WALLET = ENV.PROXY_WALLET;
 
 let temp_trades: UserActivityInterface[] = [];
+let idleAttemptCounter = 0;
 
 const UserActivity = getUserActivityModel(USER_ADDRESS);
 
@@ -117,9 +119,20 @@ const tradeExcutor = async (clobClient: ClobClient) => {
         if (temp_trades.length > 0) {
             console.log('💥 New transactions found 💥');
             spinner.stop();
+            idleAttemptCounter = 0;
             await doTrading(clobClient);
         } else {
-            spinner.start('Waiting for new transactions');
+            idleAttemptCounter += 1;
+            const nextExecutionDelaySeconds = Math.max(ENV.FETCH_INTERVAL, 1);
+            const nextExecutionTime = new Date(Date.now() + nextExecutionDelaySeconds * 1000);
+            await logger.info('Waiting for new transactions', {
+                pendingTrades: temp_trades.length,
+                attempt: idleAttemptCounter,
+                nextExecution: nextExecutionTime.toISOString(),
+            });
+            spinner.start(
+                `Waiting for new transactions (next check at ${nextExecutionTime.toLocaleTimeString()})`
+            );
         }
     }
 };
