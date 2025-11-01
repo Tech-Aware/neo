@@ -31,6 +31,8 @@ This project is a Polymarket Copy Trading Bot that allows users to automatically
     FETCH_INTERVAL = 1      // default is 1 second
     TOO_OLD_TIMESTAMP = 1   // default is 1 hour
     RETRY_LIMIT = 3         // default is 3 times
+    LOG_FILE_PATH = 'logs/trade-executor.log' // optional, default path for execution logs
+    LOG_LEVEL = 'info'      // optional, one of error|warn|info|debug
 
     MONGO_URI = 'mongodb+srv://polymarket_copytrading_bot:V5ufvi9ra1dsOA9M@cluster0.j1flc.mongodb.net/polymarket_copytrading'
 
