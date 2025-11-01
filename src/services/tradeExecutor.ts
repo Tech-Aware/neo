@@ -23,26 +23,89 @@ const readTempTrade = async () => {
     ).map((trade) => trade as UserActivityInterface);
 };
 
+const incrementBotExecutionAttempts = async (trade: UserActivityInterface) => {
+    const updatedTrade = await UserActivity.findOneAndUpdate(
+        { _id: trade._id },
+        { $inc: { botExcutedTime: 1 } },
+        { new: true }
+    ).exec();
+
+    if ((updatedTrade?.botExcutedTime ?? 0) >= RETRY_LIMIT) {
+        await UserActivity.updateOne({ _id: trade._id }, { bot: true }).exec();
+    }
+};
+
+const determineCondition = (trade: UserActivityInterface): 'merge' | 'buy' | 'sell' | null => {
+    const tradeType = trade.type?.toUpperCase();
+    if (tradeType === 'MERGE') {
+        return 'merge';
+    }
+
+    const sideValue = trade.side?.toUpperCase();
+    if (sideValue === 'MERGE') {
+        return 'merge';
+    }
+
+    if (sideValue === 'BUY') {
+        return 'buy';
+    }
+
+    if (sideValue === 'SELL') {
+        return 'sell';
+    }
+
+    return null;
+};
+
 const doTrading = async (clobClient: ClobClient) => {
     for (const trade of temp_trades) {
         console.log('Trade to copy:', trade);
-        // const market = await clobClient.getMarket(trade.conditionId);
-        const my_positions: UserPositionInterface[] = await fetchData(
-            `https://data-api.polymarket.com/positions?user=${PROXY_WALLET}`
-        );
-        const user_positions: UserPositionInterface[] = await fetchData(
-            `https://data-api.polymarket.com/positions?user=${USER_ADDRESS}`
-        );
-        const my_position = my_positions.find(
-            (position: UserPositionInterface) => position.conditionId === trade.conditionId
-        );
-        const user_position = user_positions.find(
-            (position: UserPositionInterface) => position.conditionId === trade.conditionId
-        );
-        const my_balance = await getMyBalance(PROXY_WALLET);
-        const user_balance = await getMyBalance(USER_ADDRESS);
-        console.log('My current balance:', my_balance);
-        console.log('User current balance:', user_balance);
+        try {
+            const my_positionsResponse = await fetchData(
+                `https://data-api.polymarket.com/positions?user=${PROXY_WALLET}`
+            );
+            const user_positionsResponse = await fetchData(
+                `https://data-api.polymarket.com/positions?user=${USER_ADDRESS}`
+            );
+
+            const my_positions = Array.isArray(my_positionsResponse)
+                ? (my_positionsResponse as UserPositionInterface[])
+                : [];
+            const user_positions = Array.isArray(user_positionsResponse)
+                ? (user_positionsResponse as UserPositionInterface[])
+                : [];
+
+            const my_position = my_positions.find(
+                (position: UserPositionInterface) => position.conditionId === trade.conditionId
+            );
+            const user_position = user_positions.find(
+                (position: UserPositionInterface) => position.conditionId === trade.conditionId
+            );
+            const [my_balance, user_balance] = await Promise.all([
+                getMyBalance(PROXY_WALLET),
+                getMyBalance(USER_ADDRESS),
+            ]);
+            console.log('My current balance:', my_balance);
+            console.log('User current balance:', user_balance);
+
+            const condition = determineCondition(trade);
+            if (!condition) {
+                console.log('Unsupported trade action. Marking as executed to avoid retries.');
+                await UserActivity.updateOne({ _id: trade._id }, { bot: true }).exec();
+                continue;
+            }
+
+            if (condition === 'buy' && my_balance <= 0) {
+                console.log('Insufficient balance to copy buy trade.');
+                await incrementBotExecutionAttempts(trade);
+                continue;
+            }
+
+            await postOrder(clobClient, condition, my_position, user_position, trade, my_balance, user_balance);
+        } catch (error) {
+            console.error('Error while executing trade:', error);
+            await incrementBotExecutionAttempts(trade);
+        }
     }
 };
 
